@@ -2,7 +2,8 @@ syntax = "proto3";
 package common;
 
 message Message {
-  int32  msgSize = 1;
-  int64  msgID = 2;
-  bytes  msg = 3;
+  int64  msgID = 1;
+  int8   msgType = 2;
+  int32  msgSize = 3;
+  bytes  msg = 4;
 }
