@@ -32,7 +32,7 @@ func Handler(conn net.Conn) {
 
 	buffer := make([]byte, 1024)
 	for {
-		srv := []byte{0: 0}
+		srv := make([]byte, 0, 1024)
 		for {
 			n, err := conn.Read(buffer)
 			if err != nil {
@@ -52,7 +52,7 @@ func Handler(conn net.Conn) {
 		if err != nil {
 			return
 		}
-		fmt.Printf("client %v send msg: ", message.Msg)
+		fmt.Printf("client send msg-> %s\n", string(message.Msg))
 		_, err = conn.Write(srv)
 		if err != nil {
 			return

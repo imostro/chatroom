@@ -24,7 +24,13 @@ func main() {
 		if err != nil {
 			return
 		}
-		if bytes.Equal(br[1:len(br)-1], []byte("quit")) {
+
+		br = br[:len(br)-1]
+		if len(br) == 0 {
+			continue
+		}
+
+		if bytes.Equal(br, []byte("quit")) {
 			conn.Close()
 			break
 		}
@@ -45,7 +51,7 @@ func main() {
 		if err != nil {
 			return
 		}
-		msgByte := []byte{0: 0}
+		msgByte := make([]byte, 0, 1024)
 		for {
 			n, err := conn.Read(buffer)
 			if err != nil {
@@ -61,6 +67,6 @@ func main() {
 		if err != nil {
 			return
 		}
-		fmt.Print(message.Msg)
+		fmt.Println(string(message.Msg))
 	}
 }
