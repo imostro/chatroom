@@ -3,70 +3,112 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"context"
+	"errors"
 	"fmt"
-	"github.com/golang/protobuf/proto"
-	"learn/chatroom/common"
+	"learn/chatroom/entity"
+	"log"
 	"net"
 	"os"
-	"time"
 )
 
-func main() {
-	conn, err := net.Dial("tcp", "localhost:10086")
-	if err != nil {
-		return
-	}
+var done = make(chan error)
 
-	buffer := make([]byte, 1024)
+func Send(ctx context.Context, conn net.Conn) {
 	reader := bufio.NewReader(os.Stdin)
+
 	for {
-		br, err := reader.ReadBytes('\n')
-		if err != nil {
+		select {
+		case <-ctx.Done():
 			return
-		}
-
-		br = br[:len(br)-1]
-		if len(br) == 0 {
-			continue
-		}
-
-		if bytes.Equal(br, []byte("quit")) {
-			conn.Close()
-			break
-		}
-
-		// Marshal
-		send := &common.Message{
-			Msg:     br,
-			MsgID:   time.Now().UnixNano(),
-			MsgSize: int32(len(br)),
-		}
-		encoded, err := proto.Marshal(send)
-		if err != nil {
-			return
-		}
-		_, err = conn.Write(encoded)
-
-		// 读取服务端数据
-		if err != nil {
-			return
-		}
-		msgByte := make([]byte, 0, 1024)
-		for {
-			n, err := conn.Read(buffer)
+		default:
+			fmt.Print(conn.LocalAddr(), " ->")
+			line, err := reader.ReadBytes('\n')
 			if err != nil {
 				return
 			}
-			msgByte = append(msgByte, buffer[:n]...)
-			if n < len(buffer) {
-				break
+			if bytes.Equal(line, []byte("quit\n")) {
+				done <- errors.New("quit")
+			}
+			message := entity.Message{
+				MsgType:    entity.Generate,
+				ClientName: conn.LocalAddr().String(),
+				ClientAddr: conn.LocalAddr().String(),
+				Msg:        line,
+			}
+			encode, err := entity.Encode(&message)
+			if err != nil {
+				log.Println("encode error:", err)
+			}
+			_, err = conn.Write(encode)
+			if err != nil {
+				log.Println("write error: ", err)
 			}
 		}
-		message := common.Message{}
-		err = proto.Unmarshal(msgByte, &message)
-		if err != nil {
-			return
-		}
-		fmt.Println(string(message.Msg))
 	}
+}
+
+func Received(ctx context.Context, conn net.Conn) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+			header := make([]byte, entity.MsgHeaderLen)
+			n, err := conn.Read(header)
+			if err != nil {
+				done <- err
+				return
+			}
+
+			if n < entity.MsgHeaderLen {
+				log.Println("msg header format error.")
+				continue
+			}
+			var msgLen int32
+			msgLen |= int32(header[1]) << 0
+			msgLen |= int32(header[2]) << 8
+			msgLen |= int32(header[3]) << 16
+			msgLen |= int32(header[4]) << 24
+
+			data := make([]byte, msgLen)
+			n, err = conn.Read(data)
+			if err != nil {
+				done <- err
+				return
+			}
+			if n != int(msgLen) {
+				log.Println("message format error.")
+				continue
+			}
+
+			message, err := entity.Decode(data)
+			if err != nil {
+				log.Fatalln("encode error: ", err)
+			}
+			fmt.Printf("%s -> %s", message.ClientName, message.Msg)
+		}
+	}
+}
+
+func Start() {
+	conn, err := net.Dial("tcp", "localhost:10086")
+	if err != nil {
+		fmt.Println("connect server error: ", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+
+	defer func() {
+		cancel()
+		conn.Close()
+	}()
+
+	go Send(ctx, conn)
+	go Received(ctx, conn)
+
+	<-done
+}
+
+func main() {
+	Start()
 }

@@ -1,0 +1,9 @@
+syntax = "proto3";
+package entity;
+
+message Message {
+  string clientName = 1;
+  string clientAddr = 2;
+  int32  msgType = 3;
+  bytes  msg = 4;
+}

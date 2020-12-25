@@ -1,10 +1,21 @@
-package main
+package server
 
 import (
+	"context"
+	"errors"
+	"fmt"
+	"learn/chatroom/entity"
+	"log"
 	"net"
+	"strconv"
+	"strings"
 )
 
-type Service interface {
+var (
+	broadCastCh = make(chan []byte, 128)
+)
+
+type ChatServer interface {
 	Start()
 	Stop()
 }
@@ -17,7 +28,7 @@ type ServiceSocket struct {
 }
 
 func NewServiceSocket(port int) (s *ServiceSocket, err error) {
-	serverAddr := "localhost:" + string(port)
+	serverAddr := "localhost:" + strconv.Itoa(port)
 	listener, err := net.Listen("tcp", serverAddr)
 	if err != nil {
 		return nil, err
@@ -26,13 +37,77 @@ func NewServiceSocket(port int) (s *ServiceSocket, err error) {
 		listener:   listener,
 		serverAddr: serverAddr,
 		stopCh:     make(chan error),
+		clients:    make(map[string]Conn),
 	}, nil
 }
 
-func (s *ServiceSocket) Start() {
+func (s *ServiceSocket) handlerAccept(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+			conn, err := s.listener.Accept()
+			if err != nil {
+				s.stopCh <- err
+			}
+			go s.handlerConn(ctx, conn)
+		}
+	}
+}
 
+func (s *ServiceSocket) handlerConn(ctx context.Context, rowConn net.Conn) {
+	conn := NewConn(rowConn)
+	s.clients[conn.name] = conn
+
+	connCtx, cancel := context.WithCancel(ctx)
+	defer func() {
+		cancel()
+		delete(s.clients, conn.name)
+	}()
+
+	log.Printf("-> client %s join on chat.", conn.name)
+	go conn.Send(connCtx)
+	go conn.Received(connCtx)
+
+	err := <-conn.done
+	fmt.Printf("client %s close connect, reason: %v", conn.name, err)
+}
+
+func (s *ServiceSocket) Start() {
+	ctx, cancel := context.WithCancel(context.Background())
+
+	defer func() {
+		cancel()
+		s.listener.Close()
+	}()
+	go s.handlerAccept(ctx)
+	go s.Broadcast(ctx)
+	<-s.stopCh
+}
+
+func (s *ServiceSocket) Broadcast(ctx context.Context) {
+	for true {
+		select {
+		case data := <-broadCastCh:
+			message, err := entity.Decode(data[entity.MsgHeaderLen:])
+			if err != nil {
+				log.Println("decode data error: ", err)
+			}
+
+			for name, conn := range s.clients {
+				if strings.EqualFold(message.ClientName, name) {
+					continue
+				}
+				conn.sendCh <- data
+			}
+
+		case <-ctx.Done():
+			return
+		}
+	}
 }
 
 func (s *ServiceSocket) Stop() {
-
+	s.stopCh <- errors.New("stop service")
 }
