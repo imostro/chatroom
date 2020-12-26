@@ -20,8 +20,10 @@ type MessageProtocol struct {
 	msgBody []byte
 }
 
-func NewMessage(msgBody []byte) MessageProtocol {
-	return MessageProtocol{
-		msgBody: msgBody,
+func NewHeatBeatMessage(clientName, clientAddr string) Message {
+	return Message{
+		MsgType:    BeatHeat,
+		ClientName: clientName,
+		ClientAddr: clientAddr,
 	}
 }

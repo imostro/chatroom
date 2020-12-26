@@ -12,7 +12,7 @@ import (
 )
 
 var (
-	broadCastCh = make(chan []byte, 128)
+	broadCastCh = make(chan *entity.Message, 128)
 )
 
 type ChatServer interface {
@@ -69,6 +69,7 @@ func (s *ServiceSocket) handlerConn(ctx context.Context, rowConn net.Conn) {
 	log.Printf("-> client %s join on chat.", conn.name)
 	go conn.Send(connCtx)
 	go conn.Received(connCtx)
+	go conn.HeatBeat(connCtx)
 
 	err := <-conn.done
 	fmt.Printf("client %s close connect, reason: %v", conn.name, err)
@@ -89,19 +90,13 @@ func (s *ServiceSocket) Start() {
 func (s *ServiceSocket) Broadcast(ctx context.Context) {
 	for true {
 		select {
-		case data := <-broadCastCh:
-			message, err := entity.Decode(data[entity.MsgHeaderLen:])
-			if err != nil {
-				log.Println("decode data error: ", err)
-			}
-
+		case msg := <-broadCastCh:
 			for name, conn := range s.clients {
-				if strings.EqualFold(message.ClientName, name) {
+				if strings.EqualFold(msg.ClientName, name) {
 					continue
 				}
-				conn.sendCh <- data
+				conn.sendCh <- msg
 			}
-
 		case <-ctx.Done():
 			return
 		}
