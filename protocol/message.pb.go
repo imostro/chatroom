@@ -4,7 +4,7 @@
 // 	protoc        v3.14.0
 // source: message.proto
 
-package entity
+package protocol
 
 import (
 	proto "github.com/golang/protobuf/proto"
@@ -125,7 +125,7 @@ func file_message_proto_rawDescGZIP() []byte {
 
 var file_message_proto_msgTypes = make([]protoimpl.MessageInfo, 1)
 var file_message_proto_goTypes = []interface{}{
-	(*Message)(nil), // 0: entity.Message
+	(*Message)(nil), // 0: protocol.Message
 }
 var file_message_proto_depIdxs = []int32{
 	0, // [0:0] is the sub-list for method output_type

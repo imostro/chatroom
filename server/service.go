@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"learn/chatroom/entity"
+	"learn/chatroom/protocol"
 	"log"
 	"net"
 	"strconv"
@@ -12,7 +12,7 @@ import (
 )
 
 var (
-	broadCastCh = make(chan *entity.Message, 128)
+	broadCastCh = make(chan *protocol.Message, 128)
 )
 
 type ChatServer interface {
@@ -64,6 +64,7 @@ func (s *ServiceSocket) handlerConn(ctx context.Context, rowConn net.Conn) {
 	defer func() {
 		cancel()
 		delete(s.clients, conn.name)
+		conn.Close()
 	}()
 
 	log.Printf("-> client %s join on chat.", conn.name)
@@ -72,7 +73,14 @@ func (s *ServiceSocket) handlerConn(ctx context.Context, rowConn net.Conn) {
 	go conn.HeatBeat(connCtx)
 
 	err := <-conn.done
-	fmt.Printf("client %s close connect, reason: %v", conn.name, err)
+	fmt.Printf("client %s disconnect, reason: %v", conn.name, err)
+
+	broadCastCh <- &protocol.Message{
+		MsgType:    protocol.Generate,
+		ClientName: conn.name,
+		ClientAddr: conn.conn.RemoteAddr().String(),
+		Msg:        []byte("quit chat room.\n"),
+	}
 }
 
 func (s *ServiceSocket) Start() {

@@ -2,9 +2,7 @@ package server
 
 import (
 	"context"
-	"errors"
-	"io"
-	"learn/chatroom/entity"
+	"learn/chatroom/protocol"
 	"log"
 	"net"
 	"time"
@@ -25,8 +23,8 @@ type ConnServer interface {
 type Conn struct {
 	name    string
 	conn    net.Conn
-	rcvCh   chan *entity.Message
-	sendCh  chan *entity.Message
+	rcvCh   chan *protocol.Message
+	sendCh  chan *protocol.Message
 	done    chan error
 	hbTimer *time.Timer
 }
@@ -36,8 +34,8 @@ func NewConn(conn net.Conn) Conn {
 	c := Conn{
 		name:   conn.RemoteAddr().String(),
 		conn:   conn,
-		rcvCh:  make(chan *entity.Message, 128),
-		sendCh: make(chan *entity.Message, 128),
+		rcvCh:  make(chan *protocol.Message, 128),
+		sendCh: make(chan *protocol.Message, 128),
 		done:   make(chan error),
 	}
 	c.hbTimer = time.NewTimer(hbInterval)
@@ -50,12 +48,13 @@ func (c *Conn) Send(ctx context.Context) {
 		select {
 		case msg := <-c.sendCh:
 			switch msg.MsgType {
-			case entity.Login, entity.Logout:
-			case entity.Generate, entity.BeatHeat:
-				data, err := entity.Encode(msg)
+			case protocol.Login, protocol.Logout:
+			case protocol.Generate, protocol.BeatHeat:
+				data, err := protocol.Encode(msg)
 				_, err = c.conn.Write(data)
 				if err != nil {
-					log.Fatalf("send message to client: %s error, reason: %v.\n", c.name, err)
+					log.Printf("send message to client: %s error, reason: %v.\n", c.name, err)
+					c.Close()
 				}
 			}
 		case <-ctx.Done():
@@ -72,15 +71,16 @@ func (c *Conn) Received(ctx context.Context) {
 		default:
 			c.conn.SetDeadline(time.Now().Add(hbTimeout))
 
-			header := make([]byte, entity.MsgHeaderLen)
+			header := make([]byte, protocol.MsgHeaderLen)
 			n, err := c.conn.Read(header)
 			if err != nil {
 				log.Printf("received client %s msg error, reason: %v\n", c.name, err)
-				c.Close()
+				c.done <- err
+				return
 			}
-			if n != entity.MsgHeaderLen ||
-				header[0] != entity.StartSymbol ||
-				header[len(header)-1] != entity.EndSymbol {
+			if n != protocol.MsgHeaderLen ||
+				header[0] != protocol.StartSymbol ||
+				header[len(header)-1] != protocol.EndSymbol {
 
 				log.Printf("error msg header format: %d.\n", header)
 				continue
@@ -94,24 +94,21 @@ func (c *Conn) Received(ctx context.Context) {
 			data := make([]byte, msgLen)
 			n, err = c.conn.Read(data)
 			if err != nil {
-				if err == io.EOF {
-					log.Printf("client %s close.\n", c.name)
-					return
-				}
-				log.Fatalf("received client %s msg error, reason: %v\n", c.name, err)
+				log.Printf("received client %s msg error, reason: %v\n", c.name, err)
+				c.done <- err
 			}
 			if n != int(msgLen) {
 				log.Printf("error msg format.\n")
 			}
-			msg, err := entity.Decode(data)
+			msg, err := protocol.Decode(data)
 			if err != nil {
 				log.Printf("protobuf decode error: %v \n", err)
 			}
 
 			switch msg.MsgType {
-			case entity.Login, entity.Logout:
-			case entity.BeatHeat:
-			case entity.Generate:
+			case protocol.Login, protocol.Logout:
+			case protocol.BeatHeat:
+			case protocol.Generate:
 				// 收到客户端数据，验证完毕后发送到广播中
 				broadCastCh <- msg
 			}
@@ -123,7 +120,7 @@ func (c *Conn) HeatBeat(ctx context.Context) {
 	for true {
 		select {
 		case <-c.hbTimer.C:
-			hbMsg := entity.NewHeatBeatMessage(c.name, c.conn.RemoteAddr().String())
+			hbMsg := protocol.NewHeatBeatMessage(c.name, c.conn.RemoteAddr().String())
 			c.sendCh <- &hbMsg
 			c.hbTimer.Reset(hbInterval)
 		case <-ctx.Done():
@@ -133,5 +130,5 @@ func (c *Conn) HeatBeat(ctx context.Context) {
 }
 
 func (c *Conn) Close() {
-	c.done <- errors.New(c.name + "-> close connect")
+	c.conn.Close()
 }

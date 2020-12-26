@@ -1,4 +1,4 @@
-package entity
+package protocol
 
 type MsgType int32
 
@@ -14,11 +14,6 @@ const (
 	BeatHeat
 	Logout
 )
-
-type MessageProtocol struct {
-	msgLen  int32
-	msgBody []byte
-}
 
 func NewHeatBeatMessage(clientName, clientAddr string) Message {
 	return Message{

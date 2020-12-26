@@ -6,16 +6,18 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"learn/chatroom/entity"
+	"io"
+	"learn/chatroom/protocol"
 	"log"
 	"net"
 	"os"
+	"time"
 )
 
 var (
 	done   = make(chan error)
-	sendCh = make(chan *entity.Message, 128)
-	rcvCh  = make(chan *entity.Message, 128)
+	sendCh = make(chan *protocol.Message, 128)
+	rcvCh  = make(chan *protocol.Message, 128)
 )
 
 func inputMsg(ctx context.Context) {
@@ -26,19 +28,21 @@ func inputMsg(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		default:
-			fmt.Print("client ->")
+			fmt.Print("->")
 			line, err := reader.ReadBytes('\n')
 			if err != nil {
+				done <- err
 				return
 			}
 			if bytes.Equal(line, []byte("quit\n")) {
 				done <- errors.New("quit")
+				return
 			}
-			message := entity.Message{
-				MsgType: entity.Generate,
+
+			sendCh <- &protocol.Message{
+				MsgType: protocol.Generate,
 				Msg:     line,
 			}
-			sendCh <- &message
 		}
 	}
 
@@ -53,13 +57,16 @@ func send(ctx context.Context, conn net.Conn) {
 		case msg := <-sendCh:
 			msg.ClientName = conn.LocalAddr().String()
 			msg.ClientAddr = conn.LocalAddr().String()
-			encode, err := entity.Encode(msg)
+			encode, err := protocol.Encode(msg)
 			if err != nil {
-				log.Println("encode error:", err)
+				log.Println("protobuf encode error, reason: ", err)
+				continue
 			}
 			_, err = conn.Write(encode)
 			if err != nil {
-				log.Println("write error: ", err)
+				log.Println("write msg to server error, reason: ", err)
+				done <- err
+				return
 			}
 		}
 	}
@@ -71,15 +78,20 @@ func received(ctx context.Context, conn net.Conn) {
 		case <-ctx.Done():
 			return
 		default:
-			header := make([]byte, entity.MsgHeaderLen)
+			header := make([]byte, protocol.MsgHeaderLen)
 			n, err := conn.Read(header)
 			if err != nil {
+				if err == io.EOF {
+					log.Println("is disconnect.")
+				} else {
+					log.Println("unknown read error: ", err)
+				}
 				done <- err
 				return
 			}
 
-			if n < entity.MsgHeaderLen {
-				log.Println("msg header format error.")
+			if n != protocol.MsgHeaderLen {
+				log.Println("msg header format is error.")
 				continue
 			}
 			var msgLen int32
@@ -91,6 +103,11 @@ func received(ctx context.Context, conn net.Conn) {
 			data := make([]byte, msgLen)
 			n, err = conn.Read(data)
 			if err != nil {
+				if err == io.EOF {
+					log.Println("is disconnect.")
+				} else {
+					log.Println("unknown read error: ", err)
+				}
 				done <- err
 				return
 			}
@@ -99,31 +116,31 @@ func received(ctx context.Context, conn net.Conn) {
 				continue
 			}
 
-			message, err := entity.Decode(data)
+			msg, err := protocol.Decode(data)
 			if err != nil {
-				log.Fatalln("encode error: ", err)
+				log.Println("encode error: ", err)
+				continue
 			}
-			switch message.MsgType {
-			case entity.Login, entity.Logout:
-			case entity.BeatHeat:
-				if err != nil {
-					log.Fatalf("encode error: %v \n", err)
-				}
-				sendCh <- message
-			case entity.Generate:
-				rcvCh <- message
-			}
+
+			rcvCh <- msg
 		}
 	}
 }
 
-func outputMsg(ctx context.Context) {
+func handlerRcvMsg(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case msg := <-rcvCh:
-			fmt.Printf("%s -> %s", msg.ClientName, msg.Msg)
+			switch msg.MsgType {
+			case protocol.Login, protocol.Logout:
+			case protocol.BeatHeat:
+				sendCh <- msg
+			case protocol.Generate:
+				fmt.Printf("%s ===> %s", msg.ClientName, msg.Msg)
+				fmt.Print("->")
+			}
 		}
 	}
 }
@@ -141,13 +158,27 @@ func Start() {
 	}()
 
 	go inputMsg(ctx)
-	go outputMsg(ctx)
+	go handlerRcvMsg(ctx)
 	go send(ctx, conn)
 	go received(ctx, conn)
-
+	go simulateSendMsg()
 	<-done
 }
 
+// 模拟兵法消息
+func simulateSendMsg() {
+	time.Sleep(10 * time.Second)
+
+	for i := 0; i < 10000; i++ {
+		time.Sleep(10 * time.Millisecond)
+		sendCh <- &protocol.Message{
+			MsgType: protocol.Generate,
+			Msg:     []byte("hello kiki\n"),
+		}
+	}
+
+	done <- errors.New("close")
+}
 func main() {
 	Start()
 }
